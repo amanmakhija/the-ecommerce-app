@@ -3,6 +3,7 @@ const express = require('express');
 const dotenv = require('dotenv');
 require('./db');
 const authRoutes = require('./routes/authRoutes');
+const sellerRoutes = require('./routes/sellerRoutes');
 const bodyParser = require('body-parser');
 const cookieParser = require('cookie-parser');
 const cors = require('cors');
@@ -32,6 +33,7 @@ const port = process.env.PORT || 8000;
 
 // Import routes
 app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/seller', sellerRoutes);
 
 app.get('/', (req, res) => {
     res.send('Hello World');

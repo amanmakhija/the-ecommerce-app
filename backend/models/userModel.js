@@ -25,8 +25,12 @@ const userSchema = new mongoose.Schema({
     },
     role: {
         type: String,
-        enum: ['user', 'admin'],
+        enum: ['user', 'admin 1', 'admin 2', 'admin 3', 'seller'],
         default: 'user'
+    },
+    isAdmin: {
+        type: Boolean,
+        default: false
     },
     profilePicture: {
         type: String
@@ -50,6 +54,10 @@ const userSchema = new mongoose.Schema({
         default: false
     },
     isBlocked: {
+        type: Boolean,
+        default: false
+    },
+    isRestricted: {
         type: Boolean,
         default: false
     },

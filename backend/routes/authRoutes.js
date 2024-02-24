@@ -44,7 +44,8 @@ router.post('/login', async (req, res, next) => {
     try {
         const result = await user.findOne(email ? { email } : { username });
         if (result) {
-            if (result.isBlocked) return responseFunction(res, 400, 'User is blocked. Please contact customer care', null, false);
+            if (result.isBlocked) return responseFunction(res, 403, 'User is blocked. Please contact customer care', null, false);
+            if (result.isRestricted) return responseFunction(res, 403, 'User is restricted. Please contact customer care', null, false);
             if (result.status === 'inactive') return responseFunction(res, 400, 'User is inactive. Please verify your email or phone number', null, false);
             const isMatch = await bcrypt.compare(password, result.password);
             if (isMatch) {
@@ -157,6 +158,9 @@ router.post('/forgot-password', async (req, res, next) => {
     try {
         const result = await user.findOne(email ? { email } : { mobile });
         if (result) {
+            if (result.isBlocked) return responseFunction(res, 403, 'User is blocked. Please contact customer care', null, false);
+            if (result.isRestricted) return responseFunction(res, 403, 'User is restricted. Please contact customer care', null, false);
+            if (result.status === 'inactive') return responseFunction(res, 400, 'User has not been verified yet. Please verify via phone or email first', null, false);
             const otp = Math.floor(100000 + Math.random() * 900000);
             const hashedOtp = bcrypt.hash("" + otp, saltRounds);
             // Otp expire after 5 minutes
@@ -183,26 +187,32 @@ router.post('/forgot-password', async (req, res, next) => {
 });
 
 router.post('/reset-password', async (req, res, next) => {
-    const { username, otp, password } = req.body;
+    const { username, otp, password, oldPassword } = req.body;
     if (!username) return responseFunction(res, 400, 'Username is required', null, false);
-    if (!otp) return responseFunction(res, 400, 'OTP is required', null, false);
     if (!password) return responseFunction(res, 400, 'Password is required', null, false);
     try {
         const result = await user.findOne({ username });
         if (result) {
-            if (result.forgetPasswordOTPExpireAt < Date.now()) {
+            if (!otp) {
+                if (!bcrypt.compare(result.password, oldPassword)) return responseFunction(res, 400, 'Old Password is incorrect', null, false);
+                result.password = password;
+                await result.save();
+                return responseFunction(res, 200, 'Password changed successfully', null, true);
+            } else {
+                if (result.forgetPasswordOTPExpireAt < Date.now()) {
+                    result.forgetPasswordOTP = null;
+                    result.forgetPasswordOTPExpireAt = null;
+                    await result.save();
+                    return responseFunction(res, 400, 'Link has expired', null, false);
+                }
+                const matched = bcrypt.compare(result.forgetPasswordOTP, otp);
+                if (!matched) return responseFunction(res, 400, 'Link not valid', null, false);
                 result.forgetPasswordOTP = null;
                 result.forgetPasswordOTPExpireAt = null;
+                result.password = password;
                 await result.save();
-                return responseFunction(res, 400, 'Link has expired', null, false);
+                return responseFunction(res, 200, 'Password reset successfully', null, true);
             }
-            const matched = bcrypt.compare(result.forgetPasswordOTP, otp);
-            if (!matched) return responseFunction(res, 400, 'Link not valid', null, false);
-            result.forgetPasswordOTP = null;
-            result.forgetPasswordOTPExpireAt = null;
-            result.password = password;
-            await result.save();
-            return responseFunction(res, 200, 'Password reset successfully', null, true);
         } else {
             return responseFunction(res, 400, 'User not found', null, false);
         }
@@ -213,6 +223,65 @@ router.post('/reset-password', async (req, res, next) => {
 
 router.post('/check-login', authTokenHandler, async (req, res, next) => {
     return responseFunction(res, 200, req.message, { userId: req.userId }, req.ok);
+});
+
+router.delete('/delete-user', async (req, res, next) => {
+    const { deleteUser, username } = req.body;
+    try {
+        const userDetails = await user.findOne({ username })
+        const result = await user.findOne({ username: deleteUser });
+        if (!result) return responseFunction(res, 404, 'User not found', null, false);
+        if (userDetails.isAdmin) {
+            if (!result.isAdmin) {
+                result.isRestricted = true;
+                await result.save();
+                return responseFunction(res, 200, 'User deleted successfully', result, true);
+            } else {
+                if (userDetails.role === 'admin 1' && result.role !== 'admin 1') {
+                    result.isRestricted = true;
+                    await result.save();
+                    return responseFunction(res, 200, 'User deleted successfully', result, true);
+                } else if (userDetails.role === 'admin 2' && result.role === 'admin 3') {
+                    result.isRestricted = true;
+                    await result.save();
+                    return responseFunction(res, 200, 'User deleted successfully', result, true);
+                } else return responseFunction(res, 403, 'Permission denied', null, false);
+            }
+        } else {
+            return responseFunction(res, 403, 'Permission denied', null, false);
+        }
+    } catch (error) {
+        return responseFunction(res, 400, 'Error deleting user', error.message, false);
+    }
+});
+
+router.delete('/block-user', async (req, res, next) => {
+    const { blockUser, username } = req.body;
+    try {
+        const userDetails = await user.findOne({ username });
+        if (userDetails.isAdmin) {
+            const blockUserDetails = await user.findOne({ username: blockUser });
+            if (!blockUserDetails.isAdmin) {
+                blockUserDetails.isBlocked = true;
+                await blockUserDetails.save();
+                return responseFunction(res, 200, 'User blocked successfully', blockUserDetails, true);
+            } else {
+                if (userDetails.role === 'admin 1' && blockUserDetails.role !== 'admin 1') {
+                    blockUserDetails.isBlocked = true;
+                    await blockUserDetails.save();
+                    return responseFunction(res, 200, 'User blocked successfully', blockUserDetails, true);
+                } else if (userDetails.role === 'admin 2' && blockUserDetails.role === 'admin 3') {
+                    blockUserDetails.isBlocked = true;
+                    await blockUserDetails.save();
+                    return responseFunction(res, 200, 'User blocked successfully', blockUserDetails, true);
+                } else return responseFunction(res, 403, 'Permission denied', null, false);
+            }
+        } else {
+            return responseFunction(res, 403, 'Permission denied', null, false);
+        }
+    } catch (error) {
+        return responseFunction(res, 400, 'Error blocking user', error.message, false);
+    }
 })
 
 module.exports = router;
